@@ -2,7 +2,12 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import networkx as nx
-import multiprocessing
+from multiprocessing Process, Queue, Lock
+
+# custom manager to support custom classes
+class GraphManager(BaseManager):
+    # nothing
+    pass
 
 def get_trunk(link):
     result = re.search(r"\/wiki\/(.+)", link)
@@ -17,16 +22,19 @@ def add_link(link_dict, link):
     if trunk not in link_dict.keys():
         link_dict[trunk] =  "https://en.wikipedia.org" + link
 
-def main():
+def process_page(i, crawler_pages, link_dict, return_dict, lock, G):
     G = nx.DiGraph()
-    G.add_node('Philosophy')
-    link_dict = {}
-    add_link(link_dict, '/wiki/Philosophy')
-    crawler_pages = ['Philosophy']
     counter = 0
-    while len(crawler_pages):
-        page = crawler_pages.pop(0)
+    while True:
+        try:
+            page = queue.get(timeout=0.2)
+        except Empty:
+            continue
+        if item is None:
+            break
         # print('popped: {} of degree {}'.format(page, G.out_degree(page)))
+        if page not in G:
+            G.add_node(page)
         if G.out_degree(page) == 0:
             if counter % 1000 == 0:
                 print('Processed {} Pages'.format(counter))
@@ -51,6 +59,23 @@ def main():
                 except:
                     print("Error Processing {}".format(item))
             counter+=1
-    nx.write_adjlist(G, "wikipedia.adjlist")
+    return_dict[i] = G
+
+def main():
+    G.add_node('Philosophy')
+    crawler_pages = Queue()
+    crawler_pages.put('Philosophy')
+    manager = multiprocessing.Manager()
+    return_dict = manager.dict()
+    link_dict = manager.dict()
+
+    lock = manager.lock()
+    add_link(link_dict, '/wiki/Philosophy')
+    processes = [Process(target=task, args=(i, crawler_pages, link_dict, return_dict, lock, G)) for i in range(8)]
+    for proc in processes:
+        proc.join()
+    #process subgraphs
+    # nx.write_adjlist(G, "wikipedia.adjlist")
+
 if __name__ == '__main__':
     main()

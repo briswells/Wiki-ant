@@ -26,6 +26,7 @@ class AntColony:
         self.threads = threads
         self.check_rate = check_rate
         self.best_paths = []
+        self.used_paths_lens = []
         self.bacon = 0
         if reset_g:
             nx.set_edge_attributes(self.hive, 0.1, "p_global")
@@ -36,7 +37,6 @@ class AntColony:
             if self.hive.nodes[node]['name'] == 'Kevin Bacon':
                 self.bacon = node
                 break
-        print("ID for Bacon is {}".format(self.bacon))
         self.degrees = sorted(self.hive.degree, key=lambda x: x[1], reverse=True)
         self.communities = {}
         self.find_communities()
@@ -47,6 +47,7 @@ class AntColony:
         probs = [x / p_sum for x in probs]
         start = list(np.random.choice([x[0] for x in self.degrees], 1,
                     replace=False, p=probs))
+        paths = []
         print('finding path from node {}:{}'.format(start[0], self.hive.nodes[start[0]]['name']))
         for i in range(self.max_iters):
             start_time = time.time()
@@ -57,10 +58,15 @@ class AntColony:
             print("finding paths took %s seconds" % (time.time() - start_time))
             self.update_global_pheronome(paths)
             self.pheronome_decay()
-            self.check_convergence()
+            if self.check_convergence():
+                break
             if i % self.check_rate == 0:
                 self.check_path()
             print("iter: %s took %s seconds" % (i, time.time() - start_time))
+        final_path = ''
+        for node in paths[0]:
+            final_path += self.hive.nodes[node]['name'] + ' '
+        print("shortest path found was {}:{}".format(len(paths[0]),final_path))
         return
 
     def find_paths(self, start):
@@ -73,12 +79,15 @@ class AntColony:
                     p = []
                     nodes = []
                     for edge in self.hive.edges(paths[i][-1]):
-                        community_mod = .1
-                        if self.communities[edge[1]] == self.communities[self.bacon]:
-                            community_mod = .90
                         if edge[1] not in paths[i] and self.hive.nodes[edge[1]]['type'] != 'companies':
-                            p.append(((self.hive.edges[edge[0],edge[1]]['p_global'] + self.hive.edges[edge[0],edge[1]]['p_local']) ** self.alpha *
-                            (( 1.0 / (self.degrees[0][1] - self.hive.degree[edge[1]] + 1)) ** self.beta)) * community_mod)
+                            if self.communities[edge[1]] == self.communities[self.bacon]:
+                                community_mod = .9
+                                p.append(((self.hive.edges[edge[0],edge[1]]['p_global'] + self.hive.edges[edge[0],edge[1]]['p_local']) ** self.alpha *
+                                (( 1.0 / (abs(self.hive.degree[self.bacon] - self.hive.degree[edge[1]]) + 1)) ** self.beta)) * community_mod)
+                            else:
+                                community_mod = .1
+                                p.append(((self.hive.edges[edge[0],edge[1]]['p_global'] + self.hive.edges[edge[0],edge[1]]['p_local']) ** self.alpha *
+                                (( 1.0 / (abs(self.degrees[0][1] - self.hive.degree[edge[1]]) + 1)) ** self.beta)) * community_mod)
                             nodes.append(edge[1])
                     if len(p) > 0:
                         p_sum = sum(p)
@@ -90,21 +99,23 @@ class AntColony:
                         paths[i].append(edge[0])
                         if self.hive.nodes[paths[i][-1]]['name'] == 'Kevin Bacon':
                             done[i] = True
-                            print("Ant {} finished with path len {}".format(i, len(paths[i])))
+                            # print("Ant {} finished with path len {}".format(i, len(paths[i])))
                     else:
                         paths[i] = [start[0]]
+        path_lengths = [len(x) for x in paths]
+        print("average path length: {}".format(sum(path_lengths) / len(path_lengths)))
         return paths
 
     def update_global_pheronome(self, paths):
         paths.sort(key = len)
         print('path found was of len {}'.format(len(paths[0])))
         for ant in range(self.beez_kneez_ants):
-            if len(paths[ant]) < self.hive.nodes[paths[ant][0]]["path"] and paths[ant][-1] != None:
-                self.hive.nodes[paths[ant][0]]["path"] = len(paths[ant])
-                for i in range(1,len(paths[ant])):
-                    if self.hive.nodes[paths[ant][i]]['path'] > len(paths[ant]) - i:
-                        self.hive.nodes[paths[ant][i]]['path'] = len(paths[ant]) - i
-                    self.hive.edges[paths[ant][i-1], paths[ant][i]]['p_global'] += 1 / len(paths[ant])
+            self.used_paths_lens.append(len(paths[ant]))
+            self.hive.nodes[paths[ant][0]]["path"] = len(paths[ant])
+            for i in range(1,len(paths[ant])):
+                if self.hive.nodes[paths[ant][i]]['path'] > len(paths[ant]) - i:
+                    self.hive.nodes[paths[ant][i]]['path'] = len(paths[ant]) - i
+                self.hive.edges[paths[ant][i-1], paths[ant][i]]['p_global'] += 1 / len(paths[ant])
         return
 
     def pheronome_decay(self):
@@ -116,6 +127,14 @@ class AntColony:
         return
 
     def check_convergence(self):
+        if len(self.used_paths_lens) > 5:
+            last = self.used_paths_lens[-1]
+            for i in range(5):
+                if self.used_paths_lens[-1 - i] != last:
+                    return False
+            return True
+        return False
+
         return
 
     def save_run(self):
@@ -150,8 +169,9 @@ def import_data():
                 year = data[key]
                 continue
             elif key == 'title':
-                nodes.append((data[key].strip(), dict(type=key)))
-                nodes_only.append(data[key].strip())
+                continue
+                # nodes.append((data[key].strip(), dict(type=key)))
+                # nodes_only.append(data[key].strip())
             else:
                 elements = list(data[key])
                 for element in elements:
@@ -183,6 +203,7 @@ def import_data():
             res = [(company, x) for x in nodes_only]
             G.add_edges_from(res, label=year)
     G = nx.convert_node_labels_to_integers(G, first_label=0, ordering='default', label_attribute='name')
+    # nx.write_edgelist(G, "bacon.edg", data=False)
     print("Data import took %s seconds" % (time.time() - start_time))
     return G
 
@@ -191,7 +212,7 @@ def main():
     # print(G)
     # G = nx.read_gml('output.gml')
     # print("Data import took %s seconds" % (time.time() - start_time))
-    C = AntColony(G, 10, 1, 2, 10, 1, .1, reset_g=True)
+    C = AntColony(G, 100, 1, 2, 10, 1, .20, reset_g=True)
     C.simulate()
     C.save_run()
 
